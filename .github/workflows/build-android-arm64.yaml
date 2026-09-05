@@ -1,0 +1,85 @@
+name: build-android-arm64-unsigned
+
+on:
+  workflow_dispatch: {}
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SENTRY_BACKEND: none
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Rust (Android)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Setup Java (Android)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android NDK
+        shell: bash
+        run: |
+          NDK_VERSION="28.2.13676358"
+          yes | "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" --install "ndk;${NDK_VERSION}" >/dev/null 2>&1 || true
+          echo "ANDROID_NDK=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Configure Cargo for Android
+        shell: bash
+        run: |
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml <<EOF
+          [target.aarch64-linux-android]
+          linker = "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          EOF
+
+      - name: Setup Golang
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-android-arm64-${{ hashFiles('**/pubspec.lock') }}
+          flutter-version: '3.44.9'
+
+      - name: Clean Gradle
+        run: |
+          cd android
+          flutter clean
+
+      # No keystore/local.properties is written here on purpose: without it,
+      # android/app/build.gradle.kts falls back to the debug signing config
+      # for the release build (isRelease = false), producing an unsigned/
+      # debug-signed APK. This job is for local testing builds only.
+      - name: Build Bettbox (Android arm64, unsigned)
+        shell: bash
+        run: |
+          flutter pub get
+          dart run build_runner build -d
+          dart setup.dart android --arch arm64
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Bettbox-android-arm64-unsigned
+          path: ./dist
+          compression-level: 9
+          overwrite: true

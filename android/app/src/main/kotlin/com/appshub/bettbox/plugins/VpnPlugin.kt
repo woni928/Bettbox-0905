@@ -351,6 +351,7 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         override fun onAvailable(network: Network) {
             networks.add(network)
             handleNetworkChange()
+            updateUnderlyingNetworks()
             invokeDart("networkChanged")
         }
 
@@ -359,6 +360,7 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             networkDnsMap.remove(network)
             onUpdateNetwork()
             handleNetworkChange()
+            updateUnderlyingNetworks()
             invokeDart("networkChanged")
         }
 
@@ -439,6 +441,37 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
     
+    /**
+     * Tell the system which physical network the tunnel is actually riding on.
+     * Without this, after the previous underlying network disappears (e.g. WiFi
+     * turned off) the system can keep treating the VPN as bound to the now-gone
+     * network until something forces a re-evaluation (opening the app, pulling
+     * down the notification shade). That shows up as the VPN icon vanishing and
+     * traffic silently failing until that nudge happens.
+     */
+    private fun updateUnderlyingNetworks() {
+        if (GlobalState.currentRunState != RunState.START) return
+        val vpnService = bettBoxService as? BettboxVpnService ?: return
+        val cm = connectivity ?: return
+        val active = cm.activeNetwork?.takeIf {
+            cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == false
+        }
+        val target = active ?: getActivePhysicalNetworks().firstOrNull()
+        runCatching {
+            vpnService.setUnderlyingNetworks(target?.let { arrayOf(it) })
+        }.onFailure {
+            android.util.Log.e("VpnPlugin", "setUnderlyingNetworks error: ${it.message}")
+        }
+    }
+
+    fun isNetworkValidated(): Boolean {
+        val cm = connectivity ?: return true
+        val active = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(active) ?: return false
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return true
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     private fun getCurrentNetworkType(): Int {
         val activeNetwork = connectivity?.activeNetwork ?: return -1
         val caps = connectivity?.getNetworkCapabilities(activeNetwork) ?: return -1
@@ -635,6 +668,7 @@ data object VpnPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 suspendModule?.install()
             }
         }
+        updateUnderlyingNetworks()
         onUpdateNetwork()
     }
 

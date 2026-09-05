@@ -186,12 +186,32 @@ class _SmartAutoStopManagerState extends ConsumerState<SmartAutoStopManager> {
           await _stopVpn();
         }
       } else if (!shouldStop && isSmartStopped) {
-        // Need to resume
+        // Need to resume. Give the new network a brief window to finish
+        // validating (DHCP/gateway/DNS) before we bring the tunnel up on it,
+        // otherwise establishing the VPN this early can coincide with the
+        // system's own connectivity probe and show a transient
+        // "connected / no internet" state on the WiFi entry.
+        await _waitForValidatedNetwork();
         ref.read(isSmartStoppedProvider.notifier).set(false);
         commonPrint.log('Smart Auto Stop: Restarting ...');
         await _restartVpn();
       }
     });
+  }
+
+  /// Polls up to ~3s for the active network to be validated. Fails open
+  /// (returns immediately) on any error, on non-Android, or once the budget
+  /// is spent, so this never blocks a resume indefinitely.
+  Future<void> _waitForValidatedNetwork() async {
+    if (!system.isAndroid) return;
+    for (var i = 0; i < 10; i++) {
+      try {
+        if (await service?.isNetworkValidated() ?? true) return;
+      } catch (_) {
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
   }
 
   Future<List<String>> _getNativeLocalIpAddresses() async {

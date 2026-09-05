@@ -86,6 +86,10 @@ class Service {
         const [];
   }
 
+  Future<bool> isNetworkValidated() async {
+    return await methodChannel.invokeMethod<bool>('isNetworkValidated') ?? true;
+  }
+
   Future<bool?> setQuickResponse(bool enabled) async {
     return await methodChannel.invokeMethod<bool>('setQuickResponse', {
       'enabled': enabled,
